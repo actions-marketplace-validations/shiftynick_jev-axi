@@ -10,7 +10,7 @@ jobs:
       contents: read
       id-token: write   # npm provenance
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       # Fail in seconds, not after the full build, when a release tag and the package version disagree.
       - name: Check release tag matches package version
         if: github.event_name == 'release'
@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - run: |
           tag="${{ github.event.release.tag_name }}"
           major="${tag%%.*}"
