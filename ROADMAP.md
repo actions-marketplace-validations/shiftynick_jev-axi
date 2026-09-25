@@ -34,7 +34,13 @@ Run the same checks with nobody asking.
 - 🟢 **Git hooks** (`jev-axi setup git-hooks`): pre-commit blocks credentials found locally and
   warns on risky diffs, debug leftovers, and missing tests; commit-msg warns when the message
   does not describe the diff.
-- ⚪ **pre-push hook**: risky changes such as migrations without a note.
+- 🟢 **Agent supervision** (`jev-axi setup supervise`, `jev-axi progress`): a Stop hook that checks
+  the changes against the job, and a PostToolUse hook that notices a stuck, drifting, or blocked
+  agent, for Claude Code and Codex. Warn-only by default.
+- ⚪ **Calibrated supervision thresholds**, learned from `stats/supervise.jsonl`.
+- 🟢 **pre-push hook** (`jev-axi hook pre-push`, installed by `setup git-hooks`): judges the pushed
+  range for migrations without a rollback note, auth/permission/crypto changes, hand-edited
+  generated files, and leftovers, reporting each range once.
 - 💭 **Pull request routing**: pick reviewers and labels from the diff, a Choice over
   CODEOWNERS entries.
 - 💭 **Flaky-test ledger**: classify each failure as environmental or real over time, per

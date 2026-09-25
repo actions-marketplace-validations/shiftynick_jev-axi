@@ -1,6 +1,7 @@
 import { AxiError, exitCodeForError, runAxiCli } from "axi-sdk-js";
 import { encode } from "@toon-format/toon";
 import { renderHelp, renderWithHelp, type Renderable } from "./commands/common.js";
+import { availableUpdate, updateHelp } from "./update.js";
 import { VERSION } from "./version.js";
 import { homeCommand } from "./commands/home.js";
 import { ASK_HELP, askCommand } from "./commands/ask.js";
@@ -10,6 +11,7 @@ import { FIND_HELP, findCommand } from "./commands/find.js";
 import { DIFF_HELP, diffCommand } from "./commands/diff.js";
 import { FILES_HELP, filesCommand } from "./commands/files.js";
 import { TRIAGE_HELP, triageCommand } from "./commands/triage.js";
+import { PROGRESS_HELP, progressCommand } from "./commands/progress.js";
 import { GUARD_HELP, guardCommand } from "./commands/guard.js";
 import { COMMIT_HELP, commitCommand } from "./commands/commit.js";
 import { RECIPE_HELP, recipeCommand } from "./commands/recipe.js";
@@ -36,8 +38,8 @@ export const DESCRIPTION =
 export const TOP_HELP = `usage: jev-axi <command> [args] [flags]
 primitives[4]: pick, rate, check, ask
 batch[3]: rank, filter, find
-recipes[6]: diff, files, triage, guard, commit, recipe
-safety[4]: guard-exec, setup safety, setup git-hooks, hook
+recipes[7]: diff, files, triage, guard, progress, commit, recipe
+safety[5]: guard-exec, setup safety, setup supervise, setup git-hooks, hook
 meta[7]: (none)=status, models, usage, stats, cache, config, setup
 global flags:
   --json, --full, --model <name>, --no-cache, --act <p>, --confirm <p>, --help, -v/--version
@@ -68,6 +70,7 @@ export const HELP: Record<string, string> = {
   files: FILES_HELP,
   triage: TRIAGE_HELP,
   guard: GUARD_HELP,
+  progress: PROGRESS_HELP,
   commit: COMMIT_HELP,
   recipe: RECIPE_HELP,
   stats: STATS_HELP,
@@ -86,10 +89,16 @@ const wrap = (cmd: Cmd) => async (args: string[]) => {
   return typeof out === "string" ? out : renderWithHelp(out);
 };
 
+/** Failures a newer release may already fix; bad arguments and rate limits are not among them. */
+const UPDATE_HINT_CODES = new Set(["AUTH_REQUIRED", "API_ERROR", "UNKNOWN"]);
+
 export function formatError(error: unknown): { output: string; exitCode: number } {
   const e = error instanceof AxiError ? error : new AxiError(error instanceof Error ? error.message : String(error), "UNKNOWN");
+  // Local state only: a failing command never waits on the registry.
+  const update = UPDATE_HINT_CODES.has(e.code) ? availableUpdate() : undefined;
+  const suggestions = update ? [...e.suggestions, updateHelp(update)] : e.suggestions;
   return {
-    output: [encode({ error: e.message, code: e.code }), renderHelp(e.suggestions)].filter(Boolean).join("\n") + "\n",
+    output: [encode({ error: e.message, code: e.code }), renderHelp(suggestions)].filter(Boolean).join("\n") + "\n",
     exitCode: exitCodeForError(e),
   };
 }
@@ -127,6 +136,7 @@ export async function main(argv = process.argv.slice(2), stdout?: { write: (chun
       files: wrap(filesCommand),
       triage: wrap(triageCommand),
       guard: wrap(guardCommand),
+      progress: wrap(progressCommand),
       commit: wrap(commitCommand),
       recipe: wrap(recipeCommand),
       stats: wrap(statsCommand),

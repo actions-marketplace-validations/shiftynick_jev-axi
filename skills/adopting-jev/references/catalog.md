@@ -7,6 +7,7 @@ projects (2026-09).
 
 ## Contents
 
+- [Worked cookbooks in the live docs](#worked-cookbooks-in-the-live-docs)
 - [Software engineering and CI](#software-engineering-and-ci)
 - [Agent safety and harness engineering](#agent-safety-and-harness-engineering)
 - [Moderation and trust & safety](#moderation-and-trust--safety)
@@ -17,6 +18,23 @@ projects (2026-09).
 - [Compliance, claims, and review queues](#compliance-claims-and-review-queues)
 - [Analytics and feedback](#analytics-and-feedback)
 - [Real-time and interactive](#real-time-and-interactive)
+
+## Worked cookbooks in the live docs
+
+The docs index (`https://docs.typesafe.ai/llms.txt`) links a worked cookbook for several of these
+shapes; read the current one before designing the same thing from scratch. Add `.md` to fetch it
+as Markdown. Their thresholds are examples from their data.
+
+| Shape | Cookbook path |
+| --- | --- |
+| Picking a value out of a document (find candidates in code, Jev selects, code copies) | `/cookbooks/pre_parsed_value_extraction_cookbook`, `/cookbooks/date_extraction_cookbook` |
+| Recovering structure from flattened text | `/cookbooks/autoformat` |
+| Large taxonomies, one level per request | `/cookbooks/hierarchical_classification` |
+| Does the cited passage support the claim | `/cookbooks/citation_check` |
+| Choosing a function and its typed arguments | `/cookbooks/function_calling` |
+| Semantic search in a document; reranking | `/cookbooks/semantic_find`, `/cookbooks/rerank_typesafe` |
+| Input and output guardrails for an LLM app | `/cookbooks/llm_guardrails` |
+| Acting on confidence; self-consistency | `/cookbooks/classification_using_confidence`, `/cookbooks/consistency_noul_cookbook` |
 
 ## Software engineering and CI
 
@@ -51,7 +69,7 @@ redacted text.
 | Pre-execution tool-call gate | nouls: destructive, exfiltration, beyond the user's request, runs downloaded code, weakens security, injected intent + a reversibility score | Decide routine read-only calls locally; hard-deny before the model; pick fail-open or fail-closed explicitly. `jev-axi setup safety`, `guard-exec` |
 | Screening untrusted text for injection | nouls: contains instructions aimed at an agent, exfiltration/destructive request, pressure tactics | **Put what the assistant is for in the state**: that lifted accuracy from 89.7% to 96.5% and recall from 74.9% to 95.1% (jev-sec-bench, 662 messages). `jev-axi guard` |
 | LLM app input/output guardrails | input nouls (jailbreak, harmful, medical advice, self-harm), output nouls (broke policy, harmful), severity score | Named threshold policies (strict/permissive) let one set of probabilities drive different actions with no second call |
-| Output-side judges in agent loops | nouls: weakened a test, stub introduced, claims done without a passing build, leaked a secret, repeating a failing strategy | Runs in post-tool or turn-end hooks |
+| Output-side judges in agent loops | nouls: weakened a test, stub introduced, claims done without a passing build, leaked a secret, repeating a failing strategy | Runs in post-tool or turn-end hooks; keep observations bounded, let a fixed policy act, stay silent on mid-range scores. `jev-axi setup supervise`, `jev-axi progress` |
 | Per-turn model routing | choice of model tier + reasoning depth | ~60% saving over always-frontier on a 237-turn replay, ~$0.00003 per turn. Falling back to the frontier model on low confidence ate ~80% of the savings; fall back to the middle tier |
 | Skill/tool selection from a big catalog | choice over all skills + nouls "does this turn need one", then a second call over the top 3 with full descriptions | Wrong loads 16.8% → 7.3%, needless loads 9.8% → 4.0%; it also broke 7 of 315 covered requests, so tell the agent it may ignore the suggestion |
 | Natural language to a typed function call | choice for the function, choice/noul per enum argument, "was it stated?" noul per optional argument | Call confidence = the **minimum** over the judgments, not the product. Keep an LLM for free-text arguments |

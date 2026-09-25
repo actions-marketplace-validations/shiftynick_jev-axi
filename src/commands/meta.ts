@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { configureAgent } from "./agent.js";
 import { configureGitHooks } from "./githooks.js";
-import { configureSafetyHook, safetyHookPath as configureSafetyHookPath, SAFETY_HOOK_COMMAND } from "./hook.js";
+import { configureSuperviseHooks, SUPERVISE_HOOK_COMMAND, configureSafetyHook, safetyHookPath as configureSafetyHookPath, SAFETY_HOOK_COMMAND } from "./hook.js";
 import type { Renderable as AxiRenderable } from "./common.js";
 import { AxiError, installSessionStartHooks, sessionStartHookStatus } from "axi-sdk-js";
 import { numberFlag, parseArgs } from "../args.js";
@@ -22,6 +22,8 @@ import {
   type JevConfig,
 } from "../config.js";
 import { validation } from "../errors.js";
+import { availableUpdate, refreshUpdateCheck, updateHelp, updateLine } from "../update.js";
+import { VERSION } from "../version.js";
 import { round } from "../format.js";
 import { estimateCost, formatCost, formatTokens, groupUsage, readUsage, totals, type GroupBy } from "../usage.js";
 
@@ -105,6 +107,7 @@ keys:
   price.output     USD per 1M output tokens (default ${DEFAULT_PRICE.output})
   act, confirm     band thresholds on confidence (default ${DEFAULT_THRESHOLDS.act} / ${DEFAULT_THRESHOLDS.confirm})
   cacheTtlHours    hours a cached response is reused (default ${DEFAULT_CACHE_TTL_HOURS}; 0 disables the cache)
+  updateCheck      false turns off the daily npm registry lookup behind the "update available" notice (default true)
 examples:
   jev-axi config
   jev-axi config set model jev-preview
@@ -115,7 +118,10 @@ export async function configCommand(args: string[]): Promise<AxiRenderable> {
   const p = parseArgs(args, {}, "config");
   const [action, key, value] = p.positional;
   const config = readConfig();
-  if (!action) return showConfig(config);
+  if (!action) {
+    await refreshUpdateCheck(undefined, config);
+    return showConfig(config);
+  }
   if (action !== "set" && action !== "unset") throw validation(`unknown config action ${JSON.stringify(action)}`, ["jev-axi config set <key> <value>", "jev-axi config unset <key>"]);
   if (!key) throw validation(`config ${action} needs a key`, [CONFIG_HELP.split("\n").slice(3, 8).join("; ")]);
   if (action === "set" && value === undefined) throw validation(`config set ${key} needs a value`);
@@ -140,20 +146,27 @@ function applyConfig(c: JevConfig, key: string, value: string | undefined): JevC
     case "act": next.thresholds!.act = num(); break;
     case "confirm": next.thresholds!.confirm = num(); break;
     case "cacheTtlHours": next.cacheTtlHours = num(); break;
-    default: throw validation(`unknown config key ${JSON.stringify(key)}`, ["valid keys: apiKey, model, price.input, price.output, act, confirm, cacheTtlHours"]);
+    case "updateCheck":
+      if (value !== undefined && value !== "true" && value !== "false") throw validation("updateCheck must be true or false");
+      next.updateCheck = value === undefined ? undefined : value === "true";
+      break;
+    default: throw validation(`unknown config key ${JSON.stringify(key)}`, ["valid keys: apiKey, model, price.input, price.output, act, confirm, cacheTtlHours, updateCheck"]);
   }
   return next;
 }
 
 function showConfig(c: JevConfig): Record<string, unknown> {
   const key = resolveApiKey(c);
+  const update = availableUpdate(c);
   return {
+    version: update ? `${VERSION}; ${updateLine(update)}` : VERSION,
     file: paths.configFile(),
-    apiKey: key.key ? `${redactKey(key.key)} (from ${key.source})` : "missing",
+    apiKey: key.key ? `${redactKey(key.key)} (from ${key.file ?? key.source})` : "missing",
     model: resolveModel(undefined, c),
     price: `$${resolvePrices(c).input}/1M in, $${resolvePrices(c).output}/1M out${c.price?.input === undefined && c.price?.output === undefined ? " (default)" : ""}`,
     thresholds: `act >= ${c.thresholds?.act ?? DEFAULT_THRESHOLDS.act}, confirm >= ${c.thresholds?.confirm ?? DEFAULT_THRESHOLDS.confirm}`,
     cache: `${cacheCount()} responses in ${paths.cacheDir()}, reused for ${resolveCacheTtlHours(c)}h`,
+    ...(update ? { help: [updateHelp(update)] } : {}),
   };
 }
 
@@ -203,18 +216,22 @@ function statsView(): Record<string, unknown> {
   };
 }
 
-export const SETUP_HELP = `usage: jev-axi setup hooks [--project] | setup safety [--project] [--agent claude|codex] [--remove] | setup agent [--project] [--replace-explore] [--remove] | setup git-hooks [--remove] | setup status [--project]
+export const SETUP_HELP = `usage: jev-axi setup hooks [--project] | setup safety [--project] [--agent claude|codex] [--remove] | setup supervise [--project] [--agent claude|codex] [--block] [--remove] | setup agent [--project] [--replace-explore] [--remove] | setup git-hooks [--remove] | setup status [--project]
 hooks    SessionStart hooks (Claude Code, Codex, OpenCode) so each session starts with jev-axi context.
 safety   PreToolUse hook that checks Bash commands and edits outside the project before they run, and blocks or asks
          about destructive, exfiltrating, or security-weakening calls. Routine calls are decided locally. See \`jev-axi hook --help\`.
+supervise  Stop and PostToolUse hooks for Claude Code or Codex: when the agent ends a turn, checks the changes against the job and
+         warns if it looks unfinished or unverified; during work, notes when the agent looks stuck, off track, or
+         blocked on a person. Warn-only unless --block. See \`jev-axi hook --help\`.
 agent    Claude Code subagent \`jev-explore\` that ranks files with jev-axi before reading them, for broad exploration.
          Claude Code tends to explore inside subagents, which never see skills or session hooks; this puts jev-axi there.
 git-hooks  pre-commit and commit-msg hooks in the current repository: blocks commits that add credentials (found
          locally), warns about risky or unfocused diffs and messages that don't match them. See \`jev-axi hook --help\`.
 flags:
   --project            install into the current repository instead of the user profile
-  --agent <name>       for safety: claude (default) or codex
-  --remove             for safety, agent, or git-hooks: uninstall
+  --agent <name>       for safety and supervise: claude (default) or codex
+  --block              for supervise: send the agent back to work (once per stop) instead of only warning the user
+  --remove             for safety, supervise, agent, or git-hooks: uninstall
   --replace-explore    for agent: install as \`Explore\`, overriding Claude Code's built-in explorer in this scope
 examples:
   jev-axi setup hooks
@@ -225,7 +242,7 @@ examples:
 `;
 
 export async function setupCommand(args: string[]): Promise<AxiRenderable> {
-  const p = parseArgs(args, { "--project": "bool", "--agent": "value", "--remove": "bool", "--replace-explore": "bool" }, "setup");
+  const p = parseArgs(args, { "--project": "bool", "--agent": "value", "--remove": "bool", "--replace-explore": "bool", "--block": "bool" }, "setup");
   const action = p.positional[0];
   const scope = p.bools["--project"] ? "project" : "user";
   if (action === "hooks") {
@@ -245,6 +262,20 @@ export async function setupCommand(args: string[]): Promise<AxiRenderable> {
           "Test it: echo '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm -rf ~/\"}}' | jev-axi hook pre-tool-use --explain",
         ];
     return { safety: { status, agent, scope, file }, ...(help.length ? { help } : {}) };
+  }
+  if (action === "supervise") {
+    const agent = (p.values["--agent"] ?? "claude") as "claude" | "codex";
+    if (agent !== "claude" && agent !== "codex") throw validation("--agent must be claude or codex");
+    const { file, changed } = configureSuperviseHooks(agent, p.bools["--project"], p.bools["--remove"], p.bools["--block"]);
+    const status = p.bools["--remove"] ? (changed ? "removed" : "not installed (no-op)") : changed ? "installed" : "already installed (no-op)";
+    const help = p.bools["--remove"]
+      ? []
+      : [
+          "Restart the agent session to activate it",
+          "The job, a bounded diff, and recent tool calls are sent to TypeSafe's API with secrets redacted",
+          "The scores are not calibrated for every project: check `jev-axi stats` after a few sessions before turning on --block",
+        ];
+    return { supervise: { status, agent, mode: p.bools["--block"] ? "block" : "warn", scope, file }, ...(help.length ? { help } : {}) };
   }
   if (action === "agent") {
     const { file, status } = configureAgent(p.bools["--project"], p.bools["--remove"], p.bools["--replace-explore"]);
@@ -267,12 +298,21 @@ export async function setupCommand(args: string[]): Promise<AxiRenderable> {
         return "missing";
       }
     };
+    const superviseStatus = (agent: "claude" | "codex") => {
+      try {
+        const f = configureSafetyHookPath(agent, p.bools["--project"]);
+        return existsSync(f) && readFileSync(f, "utf8").includes(SUPERVISE_HOOK_COMMAND) ? "installed" : "missing";
+      } catch {
+        return "missing";
+      }
+    };
     return {
       hooks: { scope, claude: s.claude.installed ? "installed" : "missing", codex: s.codex.installed ? "installed" : "missing", opencode: s.opencode.installed ? "installed" : "missing" },
       safety: { scope, claude: safetyFile("claude"), codex: safetyFile("codex") },
+      supervise: { scope, claude: superviseStatus("claude"), codex: superviseStatus("codex") },
     };
   }
-  throw new AxiError("Unknown setup action", "VALIDATION_ERROR", ["Run `jev-axi setup hooks`, `jev-axi setup safety`, `jev-axi setup agent`, `jev-axi setup git-hooks`, or `jev-axi setup status`"]);
+  throw new AxiError("Unknown setup action", "VALIDATION_ERROR", ["Run `jev-axi setup hooks`, `jev-axi setup safety`, `jev-axi setup supervise`, `jev-axi setup agent`, `jev-axi setup git-hooks`, or `jev-axi setup status`"]);
 }
 
 export function todayUsageLine(): string {

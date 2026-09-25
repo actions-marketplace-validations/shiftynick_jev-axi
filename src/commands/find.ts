@@ -102,9 +102,9 @@ export async function findCommand(args: string[]): Promise<AxiRenderable> {
     const weight = windows.length > 1 ? exists : 1;
     w.lines.forEach((_, i) => scored.push({ line: w.start + i + 1, p: (where.probabilities[id(i)] ?? 0) * weight }));
   }
-  const norm = windows.length > 1 ? scored.reduce((s, x) => s + x.p, 0) || 1 : 1;
+  // p stays where × exists, never renormalized across windows: a line's score
+  // and the meaning of --min must not depend on how large the file is.
   const hits = scored
-    .map((x) => ({ ...x, p: x.p / norm }))
     .filter((x) => x.p >= min)
     .sort((a, b) => b.p - a.p)
     .slice(0, top);

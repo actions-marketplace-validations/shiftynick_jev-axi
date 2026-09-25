@@ -4,7 +4,8 @@ jev-axi can run inside a repository without anyone asking it a question: before 
 call, before a commit, on every pull request, around risky scripts. This guide covers each
 integration: what it's for, how to install and check it, and how to remove it.
 
-Only install these when the user asks for them. Each one sends text to TypeSafe's API (see
+Only install what the user has chosen: when the request is general, ask which integrations they
+want before installing anything (see [Ask before installing](#ask-before-installing)). Each one sends text to TypeSafe's API (see
 "What leaves the machine" in each section) and needs an API key wherever it runs.
 
 ## Contents
@@ -12,6 +13,7 @@ Only install these when the user asks for them. Each one sends text to TypeSafe'
 - [Choosing integrations](#choosing-integrations)
 - [Before installing anything](#before-installing-anything)
 - [Agent safety hook](#agent-safety-hook)
+- [Agent supervision hooks](#agent-supervision-hooks)
 - [Guarded commands in scripts, cron, and CI](#guarded-commands-in-scripts-cron-and-ci)
 - [Git hooks](#git-hooks)
 - [GitHub Action: pull request review and CI triage](#github-action-pull-request-review-and-ci-triage)
@@ -24,18 +26,37 @@ Only install these when the user asks for them. Each one sends text to TypeSafe'
 | The user wants to | Integration | Install |
 | --- | --- | --- |
 | Stop coding agents from running destructive, exfiltrating, or download-and-run commands | Agent safety hook | `jev-axi setup safety --project` |
+| Notice when a coding agent stops before the job is done, loops on the same failure, drifts, or needs a person | Agent supervision hooks | `jev-axi setup supervise --project` |
 | Check risky commands in scripts, cron jobs, runbooks, or CI steps before they run | `guard-exec` | Prefix the command: `jev-axi guard-exec -- "<command>"` |
-| Stop commits that add credentials; get warnings about debug leftovers and missing tests | Git hooks | `jev-axi setup git-hooks` |
+| Stop commits that add credentials; get warnings about debug leftovers and missing tests, and about a whole range before it is pushed | Git hooks | `jev-axi setup git-hooks` |
 | Review every pull request and explain failed CI runs as PR comments | GitHub Action | Add the workflow files below |
 | Write a team's own judgment ("is this ticket urgent", "is this migration risky") once and reuse it | Shared recipes | `jev-axi recipe new <name> --project` |
 | Make agents in this repo use jev-axi well | Skill, session hook, explorer subagent | See [Helping agents use jev-axi](#helping-agents-use-jev-axi) |
 
-A reasonable starting set for a team repository: git hooks and the GitHub Action (they help
-every contributor, with or without agents), plus the safety hook if agents run commands there.
+### Ask before installing
+
+A general request ("set up jev-axi here", "add jev to this repo") does not say which of these the
+user wants, and it is not permission to install them all. Each one changes the repository or the
+agent's behavior and sends different data to TypeSafe, so the choice is the user's.
+
+1. Look first, so the question is specific: is it a git repository, is there `.github/workflows/`,
+   which agents are configured (`.claude/`, `.codex/`), and what does `jev-axi setup status --project`
+   already report?
+2. Ask the user which integrations they want, in one question that lists the options that fit this
+   repository, each with a line on what it does and what it sends. Use your question tool if you
+   have one, with multiple selection. Offer a recommendation, but install nothing until they answer.
+   A reasonable recommendation for a team repository: git hooks and the GitHub Action (they help
+   every contributor, with or without agents), plus the safety hook if agents run commands there.
+3. Ask only about choices that belong to what they picked: project or user scope, which agent
+   (Claude Code or Codex), and for supervision, warn-only (the default to recommend) or `--block`.
+4. Install exactly what they chose, then report what was installed, where, and how to remove it.
+
+If the user names the integrations ("add the git hooks and the safety hook"), skip the question and
+install those. Don't add others alongside them; mention one if it clearly fits, and leave it there.
 
 ## Before installing anything
 
-1. **Key.** Local integrations (safety hook, git hooks, `guard-exec`) read the key from
+1. **Key.** Local integrations (safety and supervision hooks, git hooks, `guard-exec`) read the key from
    `TYPESAFE_API_KEY`, a `.env` file in the working directory, or `jev-axi config set apiKey`.
    The GitHub Action reads a repository secret. Run `jev-axi` to see `key: ok` or `key: missing`.
 2. **Installed CLI.** Hooks call `jev-axi` on PATH: `npm install -g jev-axi`. Git hooks skip
@@ -68,6 +89,38 @@ jev-axi setup safety --remove --project     # uninstall
   should show `decision: deny`.
 - Decisions that reached Jev are logged to `~/.config/jev-axi/stats/safety.jsonl`.
 - Restart the agent session after installing so it loads the hook.
+
+## Agent supervision hooks
+
+**For:** agents (Claude Code, Codex) working on multi-step jobs, where the cost is a turn that ends
+early or an agent that burns calls going nowhere.
+
+```sh
+jev-axi setup supervise --project                 # Claude Code: .claude/settings.json, warn-only
+jev-axi setup supervise --project --agent codex   # Codex: .codex/hooks.json
+jev-axi setup supervise --project --block         # re-run to switch mode
+jev-axi setup supervise --remove --project
+```
+
+- **Stop hook:** when a turn ends and the repository changed during the session, scores the job
+  against the diff and recent tool output. On a clear signal it shows the user a warning. Turns
+  with no changes make no API call; mid-range scores say nothing.
+- **PostToolUse hook:** keeps the last 30 tool calls locally and scores them every 10 calls. When
+  the agent looks stuck, off track, or blocked on a person, it adds a note to the agent's context.
+  It never blocks.
+- **Install warn-only.** The scores are not calibrated for the project, and a wrong "not done"
+  sends an agent back to finished work. Suggest `--block` only after the user has looked at the
+  `supervise` section of `jev-axi stats` from real sessions (the full log is
+  `~/.config/jev-axi/stats/supervise.jsonl`). With `--block`, the agent is sent
+  back at most once per stop.
+- **What leaves the machine:** the user's first and latest prompts, up to 20,000 characters of
+  diff (untracked files included), the tail of recent tool output, and the last 30 tool calls,
+  with credentials in known formats redacted. Credential files (`.env`, `*.pem`, `.npmrc`, ...) and
+  changes that predate the session are left out. This is more than the safety hook sends: confirm it.
+- The job is read from the agent's transcript, whose format neither agent guarantees. If it
+  can't be read, the hooks do nothing.
+- **Check it:** `jev-axi setup status --project`; run any hook by hand with `--explain --input '<json>'`.
+- Restart the agent session after installing.
 
 ## Guarded commands in scripts, cron, and CI
 
@@ -102,16 +155,27 @@ jev-axi setup git-hooks --remove
   about risky files, debug leftovers, and behavior changes without tests.
 - **commit-msg** warns when the message doesn't describe the staged diff, is vague, or breaks
   Conventional Commits in a repository whose history uses them.
-- Warnings never block. Both hooks add about a second per commit and skip quietly without the
-  CLI, a key, or network. `git commit --no-verify` bypasses them once.
-- Stricter: edit `.git/hooks/pre-commit` to run `jev-axi hook pre-commit --block-on flags`, or
-  `.git/hooks/commit-msg` to run `jev-axi hook commit-msg "$1" --strict`.
+- **pre-push** judges the whole range being pushed, not each commit: a schema or migration change
+  with no rollback or deploy note in the commits, a range touching auth, permissions, crypto, or
+  credential handling, hand-edited generated or vendored files, and work-in-progress leftovers
+  that got past pre-commit in an earlier commit. It reads git's ref updates on stdin so the range
+  is exactly what the remote is missing, and it reports each range once, so pushing a branch
+  repeatedly while you work stays quiet until new commits change it.
+- Warnings never block. All three hooks add about a second per commit or push and skip quietly
+  without the CLI, a key, or network. `git commit --no-verify` and `git push --no-verify` bypass
+  them once.
+- Stricter: edit `.git/hooks/pre-commit` to run `jev-axi hook pre-commit --block-on flags`,
+  `.git/hooks/commit-msg` to run `jev-axi hook commit-msg "$1" --strict`, or `.git/hooks/pre-push`
+  to run `jev-axi hook pre-push --block-on flags`.
 - **husky, lefthook, or another `core.hooksPath` manager:** the installer doesn't write into it
   and prints the lines to add to that tool's hooks instead.
 - `.git/hooks` isn't versioned, so each clone installs its own. For a team, add
   `jev-axi setup git-hooks` to the repository's setup script or contributing guide, or use the
   hook manager lines.
-- **What leaves the machine:** the staged diff with credentials redacted, and the commit message.
+- **What leaves the machine:** the staged diff with credentials redacted, the commit message, and
+  for pre-push the pushed range's diff (bounded to 20,000 characters, credentials redacted) with
+  its commit subjects and file list. Ranges over 60 files or 50 commits are skipped rather than
+  truncated.
 
 ## GitHub Action: pull request review and CI triage
 
@@ -204,6 +268,8 @@ git diff main..HEAD | jev-axi recipe run release-risk
 ```sh
 jev-axi setup safety --remove --project
 jev-axi setup safety --remove --project --agent codex
+jev-axi setup supervise --remove --project
+jev-axi setup supervise --remove --project --agent codex
 jev-axi setup git-hooks --remove
 jev-axi setup agent --remove --project
 ```
