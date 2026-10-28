@@ -1,6 +1,6 @@
 {
   "name": "jev-axi",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Agent-ergonomic CLI for TypeSafe's Jev: offload snap judgments (choice, score, yes/no) over files and stdin to a fast calibrated model.",
   "author": "Nicholas Underwood (shiftynick)",
   "license": "MIT",
@@ -51,7 +51,7 @@
   },
   "dependencies": {
     "@toon-format/toon": "^4.1.1",
-    "@typesafe-ai/sdk": "^0.6.0",
+    "@typesafe-ai/sdk": "^0.7.0",
     "axi-sdk-js": "^0.1.12",
     "yaml": "^2.9.1"
   },
